@@ -452,11 +452,10 @@ export const GET_PRODUCTS = gql`
 <script setup lang="ts">
 import { GET_PRODUCTS } from '@/graphql/modules/product/queries'
 
-const { result, loading, error } = useQuery(GET_PRODUCTS, {
-  filter: { active: true }
-})
+// Prefer project composable wrapper for GraphQL queries
+const { data, loading, error } = useGqlQuery('product', 'get', () => ({ filter: { active: true } }))
 
-const products = computed(() => result.value?.products ?? [])
+const products = computed(() => data.value?.products ?? [])
 </script>
 ```
 

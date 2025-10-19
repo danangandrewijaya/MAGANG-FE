@@ -157,27 +157,29 @@ export const DELETE_USER = gql`
 
 ## 🔍 Membuat Query
 
-### Basic Query
+### Basic Query (prefer `useGqlQuery`)
+
+Project ini menyediakan composable `useGqlQuery` yang membungkus konfigurasi Apollo / fetch logic untuk konsistensi dan integrasi dengan error handling, loading state, dan pola caching yang digunakan aplikasi.
 
 ```vue
 <script setup lang="ts">
 import { GET_USERS } from '@/graphql/modules/user/queries'
+// Gunakan composable wrapper milik proyek untuk konsistensi
+const { data, loading, error, refetch } = useGqlQuery('user', 'get', {
+  // variables untuk query (jika diperlukan)
+})
 
-// Simple query
-const { result, loading, error } = useQuery(GET_USERS)
-
-// Computed untuk mengakses data
-const users = computed(() => result.value?.users?.data ?? [])
+const users = computed(() => data.value?.users?.data ?? [])
 </script>
 
 <template>
   <div>
     <VProgressCircular v-if="loading" indeterminate />
-    
+
     <VAlert v-else-if="error" type="error">
       {{ error.message }}
     </VAlert>
-    
+
     <VList v-else>
       <VListItem
         v-for="user in users"
@@ -196,31 +198,22 @@ const users = computed(() => result.value?.users?.data ?? [])
 <script setup lang="ts">
 import { GET_USERS } from '@/graphql/modules/user/queries'
 
-const filter = ref({
-  role: 'admin',
-  status: 'active',
+const filter = ref({ role: 'admin', status: 'active' })
+
+const pagination = ref({ page: 1, limit: 10 })
+
+// Prefer project composable for queries
+const { data, loading, refetch } = useGqlQuery('user', 'get', () => ({
+  filter: filter.value,
+  pagination: pagination.value,
+}), {
+  fetchPolicy: 'cache-and-network',
 })
 
-const pagination = ref({
-  page: 1,
-  limit: 10,
-})
+const users = computed(() => data.value?.users?.data ?? [])
+const meta = computed(() => data.value?.users?.meta ?? {})
 
-const { result, loading, refetch } = useQuery(
-  GET_USERS,
-  () => ({
-    filter: filter.value,
-    pagination: pagination.value,
-  }),
-  {
-    fetchPolicy: 'cache-and-network',
-  }
-)
-
-const users = computed(() => result.value?.users?.data ?? [])
-const meta = computed(() => result.value?.users?.meta ?? {})
-
-// Refetch when filter changes
+// Refetch when filter or pagination changes
 watch([filter, pagination], () => {
   refetch()
 })
@@ -239,6 +232,7 @@ import { GET_USER } from '@/graphql/modules/user/queries'
 
 const userId = ref<string | null>(null)
 
+// If project provides a lazy variant for useGqlQuery, prefer that. Otherwise use useLazyQuery.
 const { result, loading, load } = useLazyQuery(GET_USER)
 
 const user = computed(() => result.value?.user)
@@ -256,6 +250,8 @@ async function loadUser(id: string) {
 <script setup lang="ts">
 import { GET_USERS } from '@/graphql/modules/user/queries'
 
+// For manual/SSR queries you can also use useAsyncQuery or server-side wrappers.
+// If a project async wrapper exists, prefer it. Otherwise use the Nuxt provided useAsyncQuery.
 const { data, pending, error, refresh } = await useAsyncQuery(GET_USERS)
 
 const users = computed(() => data.value?.users?.data ?? [])
@@ -266,14 +262,16 @@ const users = computed(() => data.value?.users?.data ?? [])
 
 ## ✏️ Membuat Mutation
 
-### Basic Mutation
+### Basic Mutation (prefer `useGqlMutation`)
+
+Gunakan `useGqlMutation` yang disediakan proyek agar pola error handling, success message, dan integrasi cache/refetch konsisten.
 
 ```vue
 <script setup lang="ts">
 import { CREATE_USER } from '@/graphql/modules/user/mutations'
 import { GET_USERS } from '@/graphql/modules/user/queries'
 
-const { mutate: createUser, loading, onDone, onError } = useMutation(CREATE_USER)
+const { execute: createUser, loading, onDone, onError } = useGqlMutation('user', 'create')
 
 const form = ref({
   name: '',
@@ -283,37 +281,19 @@ const form = ref({
 })
 
 async function submit() {
-  await createUser(
-    {
-      input: form.value,
-    },
-    {
-      // Refetch queries after mutation
-      refetchQueries: [{ query: GET_USERS }],
-      
-      // Or update cache manually
-      update: (cache, { data }) => {
-        // Update cache logic here
-      },
-    }
-  )
+  await createUser({ data: { input: form.value } }, {
+    // jika composable mendukung opsi cache/refetch, tambahkan di sini
+    refetchQueries: ['user.get'],
+  })
 }
 
-// Handle success
-onDone((result) => {
-  useSnackbar().show({
-    message: 'User berhasil dibuat',
-    color: 'success',
-  })
+onDone(() => {
+  useSnackbar().show({ message: 'User berhasil dibuat', color: 'success' })
   form.value = { name: '', email: '', password: '', role: 'user' }
 })
 
-// Handle error
-onError((error) => {
-  useSnackbar().show({
-    message: error.message,
-    color: 'error',
-  })
+onError((err) => {
+  useSnackbar().show({ message: err.message || 'Terjadi kesalahan', color: 'error' })
 })
 </script>
 
@@ -323,47 +303,29 @@ onError((error) => {
     <VTextField v-model="form.email" label="Email" />
     <VTextField v-model="form.password" label="Password" type="password" />
     <VSelect v-model="form.role" :items="['user', 'admin']" label="Role" />
-    
-    <VBtn type="submit" :loading="loading">
-      Create User
-    </VBtn>
+
+    <VBtn type="submit" :loading="loading">Create User</VBtn>
   </VForm>
 </template>
 ```
 
 ### Mutation dengan Optimistic Response
 
+Jika composable `useGqlMutation` mendukung opsi optimistic update, gunakan pola ini. Jika tidak, gunakan manual cache update via refetch.
+
 ```vue
 <script setup lang="ts">
 import { UPDATE_USER } from '@/graphql/modules/user/mutations'
 
-const { mutate: updateUser } = useMutation(UPDATE_USER)
+const { execute: updateUser } = useGqlMutation('user', 'update')
 
 async function updateUserName(userId: string, newName: string) {
-  await updateUser(
-    {
-      id: userId,
-      input: { name: newName },
+  await updateUser({ data: { id: userId, input: { name: newName } } }, {
+    optimisticResponse: {
+      updateUser: { __typename: 'User', id: userId, name: newName },
     },
-    {
-      optimisticResponse: {
-        updateUser: {
-          __typename: 'User',
-          id: userId,
-          name: newName,
-        },
-      },
-      update: (cache, { data }) => {
-        // Update cache immediately
-        cache.modify({
-          id: cache.identify({ __typename: 'User', id: userId }),
-          fields: {
-            name: () => data.updateUser.name,
-          },
-        })
-      },
-    }
-  )
+    // or refetchQueries: ['user.get']
+  })
 }
 </script>
 ```
@@ -374,39 +336,20 @@ async function updateUserName(userId: string, newName: string) {
 <script setup lang="ts">
 import { DELETE_USER } from '@/graphql/modules/user/mutations'
 
-const { mutate: deleteUser } = useMutation(DELETE_USER)
+const { execute: deleteUser } = useGqlMutation('user', 'delete')
 
 async function handleDelete(userId: string) {
-  const confirmed = await useConfirmDialog().confirm({
-    title: 'Hapus User',
-    message: 'Apakah Anda yakin ingin menghapus user ini?',
-  })
-  
+  const confirmed = await useConfirmDialog().confirm({ title: 'Hapus User', message: 'Apakah Anda yakin ingin menghapus user ini?' })
   if (!confirmed) return
-  
+
   try {
-    await deleteUser(
-      { id: userId },
-      {
-        update: (cache) => {
-          // Remove from cache
-          cache.evict({ 
-            id: cache.identify({ __typename: 'User', id: userId }) 
-          })
-          cache.gc()
-        },
-      }
-    )
-    
-    useSnackbar().show({
-      message: 'User berhasil dihapus',
-      color: 'success',
+    await deleteUser({ data: { id: userId } }, {
+      refetchQueries: ['user.get'],
     })
+
+    useSnackbar().show({ message: 'User berhasil dihapus', color: 'success' })
   } catch (error) {
-    useSnackbar().show({
-      message: 'Gagal menghapus user',
-      color: 'error',
-    })
+    useSnackbar().show({ message: 'Gagal menghapus user', color: 'error' })
   }
 }
 </script>
@@ -441,30 +384,19 @@ export const UPLOAD_FILE = gql`
 <script setup lang="ts">
 import { UPLOAD_FILE } from '@/graphql/modules/file/mutations'
 
-const { mutate: uploadFile, loading } = useMutation(UPLOAD_FILE)
+const { execute: uploadFile, loading } = useGqlMutation('file', 'upload')
 
 async function handleFileSelect(event: Event) {
   const target = event.target as HTMLInputElement
   const file = target.files?.[0]
-  
   if (!file) return
-  
+
   try {
-    const { data } = await uploadFile({
-      file,
-    })
-    
+    const { data } = await uploadFile({ data: { file } })
     console.log('File uploaded:', data.uploadFile)
-    
-    useSnackbar().show({
-      message: 'File berhasil diupload',
-      color: 'success',
-    })
+    useSnackbar().show({ message: 'File berhasil diupload', color: 'success' })
   } catch (error) {
-    useSnackbar().show({
-      message: 'Gagal upload file',
-      color: 'error',
-    })
+    useSnackbar().show({ message: 'Gagal upload file', color: 'error' })
   }
 }
 </script>
@@ -538,37 +470,28 @@ interface GraphQLError {
 <script setup lang="ts">
 import { GET_USERS } from '@/graphql/modules/user/queries'
 
-const { result, error, onError } = useQuery(GET_USERS)
+// Prefer the project composable for consistent error handling
+const { data, error, onError } = useGqlQuery('user', 'get')
 
 // Handle specific errors
-onError((error) => {
-  if (error.graphQLErrors) {
-    error.graphQLErrors.forEach((err) => {
-      switch (err.extensions?.code) {
+onError((err) => {
+  if (err.graphQLErrors) {
+    err.graphQLErrors.forEach((e) => {
+      switch (e.extensions?.code) {
         case 'UNAUTHENTICATED':
-          // Redirect to login
           navigateTo('/login')
           break
         case 'FORBIDDEN':
-          useSnackbar().show({
-            message: 'Anda tidak memiliki akses',
-            color: 'error',
-          })
+          useSnackbar().show({ message: 'Anda tidak memiliki akses', color: 'error' })
           break
         default:
-          useSnackbar().show({
-            message: err.message,
-            color: 'error',
-          })
+          useSnackbar().show({ message: e.message, color: 'error' })
       }
     })
   }
-  
-  if (error.networkError) {
-    useSnackbar().show({
-      message: 'Tidak dapat terhubung ke server',
-      color: 'error',
-    })
+
+  if (err.networkError) {
+    useSnackbar().show({ message: 'Tidak dapat terhubung ke server', color: 'error' })
   }
 })
 </script>
@@ -639,37 +562,35 @@ import { GET_USERS } from '@/graphql/modules/user/queries'
 const page = ref(1)
 const limit = ref(10)
 
-const { result, loading, fetchMore } = useQuery(
-  GET_USERS,
-  () => ({
-    pagination: { page: page.value, limit: limit.value },
-  })
-)
+const { data, loading, fetchMore } = useGqlQuery('product', 'get', () => ({ pagination: { page: page.value, limit: limit.value } }))
 
-const users = computed(() => result.value?.users?.data ?? [])
-const meta = computed(() => result.value?.users?.meta)
+const products = computed(() => data.value?.products?.data ?? [])
+const meta = computed(() => data.value?.products?.meta)
 
 async function loadMore() {
   page.value++
-  
-  await fetchMore({
-    variables: {
-      pagination: { page: page.value, limit: limit.value },
-    },
-    updateQuery: (prev, { fetchMoreResult }) => {
-      if (!fetchMoreResult) return prev
-      
-      return {
-        users: {
-          ...fetchMoreResult.users,
-          data: [
-            ...prev.users.data,
-            ...fetchMoreResult.users.data,
-          ],
-        },
-      }
-    },
-  })
+
+  // If useGqlQuery exposes fetchMore, use it. Otherwise refetch with updated pagination.
+  if (typeof fetchMore === 'function') {
+    await fetchMore({
+      variables: { pagination: { page: page.value, limit: limit.value } },
+      updateQuery: (prev, { fetchMoreResult }) => {
+        if (!fetchMoreResult) return prev
+
+        return {
+          products: {
+            ...fetchMoreResult.products,
+            data: [
+              ...prev.products.data,
+              ...fetchMoreResult.products.data,
+            ],
+          },
+        }
+      },
+    })
+  } else {
+    await refetch()
+  }
 }
 </script>
 ```
@@ -731,17 +652,16 @@ import { GET_USERS, GET_USER } from '@/graphql/modules/user/queries'
 import { CREATE_USER, UPDATE_USER, DELETE_USER } from '@/graphql/modules/user/mutations'
 
 export function useUsers() {
-  const { result, loading, error, refetch } = useQuery(GET_USERS)
-  
-  const users = computed(() => result.value?.users?.data ?? [])
-  
-  const { mutate: createUser } = useMutation(CREATE_USER, {
-    refetchQueries: [{ query: GET_USERS }],
-  })
-  
-  const { mutate: updateUser } = useMutation(UPDATE_USER)
-  const { mutate: deleteUser } = useMutation(DELETE_USER)
-  
+  // Prefer project composable for queries
+  const { data, loading, error, refetch } = useGqlQuery('user', 'get')
+
+  const users = computed(() => data.value?.users?.data ?? [])
+
+  // Prefer project mutation composables
+  const { execute: createUser, loading: creating } = useGqlMutation('user', 'create')
+  const { execute: updateUser, loading: updating } = useGqlMutation('user', 'update')
+  const { execute: deleteUser, loading: deleting } = useGqlMutation('user', 'delete')
+
   return {
     users,
     loading,
@@ -750,6 +670,9 @@ export function useUsers() {
     createUser,
     updateUser,
     deleteUser,
+    creating,
+    updating,
+    deleting,
   }
 }
 ```
@@ -895,33 +818,29 @@ export function useProducts(initialFilter?: ProductFilter) {
   const filter = ref(initialFilter || {})
   const pagination = ref({ page: 1, limit: 10 })
   
-  const { result, loading, error, refetch } = useQuery(
-    GET_PRODUCTS,
-    () => ({
-      filter: filter.value,
-      pagination: pagination.value,
-    }),
-    {
-      fetchPolicy: 'cache-and-network',
-    }
-  )
-  
-  const products = computed(() => result.value?.products?.data ?? [])
-  const meta = computed(() => result.value?.products?.meta)
-  
-  const { mutate: createProduct, loading: creating } = useMutation(
-    CREATE_PRODUCT,
-    {
-      refetchQueries: [{ query: GET_PRODUCTS }],
-    }
-  )
-  
-  const { mutate: updateProduct, loading: updating } = useMutation(UPDATE_PRODUCT)
-  const { mutate: deleteProduct, loading: deleting } = useMutation(DELETE_PRODUCT)
+  // Dengan composable proyek
+  const { data, loading, refetch } = useGqlQuery('product', 'get', () => ({
+    filter: filter.value,
+    pagination: pagination.value,
+  }))
+
+  const products = computed(() => data.value?.products?.data ?? [])
+
+  // Refetch ketika filter berubah
+  watch([filter, pagination], () => {
+    refetch()
+  })
+
+  function nextPage() {
+    pagination.value++
+  }
+
+  const { execute: updateProduct, loading: updating } = useGqlMutation('product', 'update')
+  const { execute: deleteProduct, loading: deleting } = useGqlMutation('product', 'delete')
   
   async function create(input: ProductInput) {
     try {
-      const { data } = await createProduct({ input })
+      const { data } = await createProduct({ data: { input } })
       useSnackbar().show({
         message: 'Produk berhasil dibuat',
         color: 'success',
@@ -938,7 +857,7 @@ export function useProducts(initialFilter?: ProductFilter) {
   
   async function update(id: string, input: ProductInput) {
     try {
-      const { data } = await updateProduct({ id, input })
+      const { data } = await updateProduct({ data: { id, input } })
       useSnackbar().show({
         message: 'Produk berhasil diupdate',
         color: 'success',
@@ -962,7 +881,7 @@ export function useProducts(initialFilter?: ProductFilter) {
     if (!confirmed) return false
     
     try {
-      await deleteProduct({ id })
+  await deleteProduct({ data: { id } })
       await refetch()
       useSnackbar().show({
         message: 'Produk berhasil dihapus',
